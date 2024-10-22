@@ -15,34 +15,33 @@ const scrapeLogic = async (res) => {
         : puppeteer.executablePath(),
   });
   try {
+    console.log("Iniciando scraping de books.toscrape.com...");
     const page = await browser.newPage();
+    
+    // Navegar a la página
+    await page.goto("https://books.toscrape.com/", {
+      waitUntil: 'networkidle0',
+      timeout: 30000
+    });
 
-    await page.goto("https://developer.chrome.com/");
+    console.log("Página cargada, buscando el mensaje...");
+    
+    // Obtener el texto dentro de <small>
+    const welcomeMessage = await page.evaluate(() => {
+      const smallElement = document.querySelector('small');
+      return smallElement ? smallElement.textContent : null;
+    });
 
-    // Set screen size
-    await page.setViewport({ width: 1080, height: 1024 });
+    if (welcomeMessage) {
+      console.log("Mensaje encontrado:", welcomeMessage);
+      res.send(`Mensaje extraído: ${welcomeMessage}`);
+    } else {
+      throw new Error("No se pudo encontrar el elemento <small>");
+    }
 
-    // Type into search box - Updated selector
-    await page.type(".devsite-search-field", "automate beyond recorder");
-
-    // Wait and click on first result
-    const searchResultSelector = ".search-box__link";
-    await page.waitForSelector(searchResultSelector);
-    await page.click(searchResultSelector);
-
-    // Locate the full title with a unique string
-    const textSelector = await page.waitForSelector(
-      "text/Customize and automate"
-    );
-    const fullTitle = await textSelector.evaluate((el) => el.textContent);
-
-    // Print the full title
-    const logStatement = `The title of this blog post is ${fullTitle}`;
-    console.log(logStatement);
-    res.send(logStatement);
   } catch (e) {
-    console.error(e);
-    res.send(`Something went wrong while running Puppeteer: ${e}`);
+    console.error("Error durante el scraping:", e);
+    res.send(`Ocurrió un error: ${e.message}`);
   } finally {
     await browser.close();
   }
