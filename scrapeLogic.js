@@ -22,8 +22,8 @@ const scrapeLogic = async (res) => {
     // Set screen size
     await page.setViewport({ width: 1080, height: 1024 });
 
-    // Type into search box
-    await page.type(".search-box__input", "automate beyond recorder");
+    // Type into search box - Updated selector
+    await page.type('[type="search"]', "automate beyond recorder");
 
     // Wait and click on first result
     const searchResultSelector = ".search-box__link";
