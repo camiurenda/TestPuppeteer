@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp QR</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        .container {
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        #qrcode {
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        #qrcode img {
+            max-width: 100%;
+            height: auto;
+        }
+        #status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .status-disconnected { background: #ff4444; color: white; }
+        .status-loading { background: #ffbb33; color: black; }
+        .status-authenticated { background: #00C851; color: white; }
+        .status-ready { background: #33b5e5; color: white; }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WhatsApp Web Connector</h1>
+        <div id="status">Conectando...</div>
+        <div id="qrcode">
+            <div class="loading"></div>
+            <p>Esperando código QR...</p>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const qrcodeDiv = document.getElementById('qrcode');
+        const statusDiv = document.getElementById('status');
+
+        function updateStatus(data) {
+            statusDiv.className = ''; // Limpiar clases anteriores
+            statusDiv.classList.add(`status-${data.status}`);
+            statusDiv.textContent = data.message;
+
+            if (data.status === 'ready') {
+                qrcodeDiv.style.display = 'none';
+            } else if (data.status === 'disconnected') {
+                qrcodeDiv.style.display = 'block';
+            }
+        }
+
+        socket.on('connect', () => {
+            console.log('Conectado a Socket.IO');
+            socket.emit('requestQR');
+        });
+
+        socket.on('whatsappQR', (data) => {
+            qrcodeDiv.innerHTML = `<img src="${data.qrCode}" alt="WhatsApp QR Code">`;
+        });
+
+        socket.on('whatsappStatus', (data) => {
+            updateStatus(data);
+        });
+
+        socket.on('error', (data) => {
+            console.error('Error:', data.message);
+            statusDiv.className = 'status-disconnected';
+            statusDiv.textContent = data.message;
+        });
+
+        socket.on('disconnect', () => {
+            updateStatus({
+                status: 'disconnected',
+                message: 'Desconectado del servidor'
+            });
+        });
+    </script>
+</body>
+</html>
