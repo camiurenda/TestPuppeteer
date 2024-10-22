@@ -36,7 +36,7 @@ io.on('connection', (socket) => {
   });
 });
 
-initializeWhatsApp(wss);
+initializeWhatsApp(io);
 
 httpServer.listen(PORT, () => {
   console.log(`Servidor funcionando en puerto ${PORT}`);
