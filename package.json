@@ -1,6 +1,7 @@
 {
-  "name": "prueba-puppeteer",
+  "name": "puppeteer-render",
   "version": "1.0.0",
+  "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -9,11 +10,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
-    "chromium": "^3.0.3",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.1",
-    "puppeteer": "^23.6.0"
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "puppeteer": "^19.7.2"
   }
 }
