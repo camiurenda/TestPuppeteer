@@ -10,7 +10,7 @@ const scrapeLogic = async (res) => {
             "--single-process",
             "--no-zygote",
         ],
-        executablePath: `/usr/bin/google-chrome`,
+        executablePath: '/usr/bin/chromium-browser',
     });
     try {
         const page = await browser.newPage();
