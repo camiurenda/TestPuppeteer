@@ -11,7 +11,7 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.NODE_ENV === "production" 
-      ? ["https://tudominio.com"] // Ajusta esto a tu dominio en producción
+      ? ["https://testpuppeteer-1d96.onrender.com/"] 
       : ["http://localhost:4000"],
     methods: ["GET", "POST"]
   }
