@@ -20,7 +20,6 @@ const conectarDB = async () => {
             maxPoolSize: 10,
             minPoolSize: 5,
             maxIdleTimeMS: 10000,
-            keepAlive: true,
             tls: true,
             ssl: true,
         };
