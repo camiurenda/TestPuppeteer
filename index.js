@@ -2,6 +2,7 @@ const express = require("express");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const { scrapeLogic } = require("./scrapeLogic");
+const conectarDB = require("./config/database");
 const { initializeWhatsApp } = require("./whatsappLogic");
 const path = require("path");
 
@@ -36,8 +37,21 @@ io.on('connection', (socket) => {
   });
 });
 
-initializeWhatsApp(io);
+const iniciar = async () => {
+  try {
+    await conectarDB();
+    console.log('Base de datos conectada');
+    
+    initializeWhatsApp(io);
 
-httpServer.listen(PORT, () => {
-  console.log(`Servidor funcionando en puerto ${PORT}`);
-});
+    httpServer.listen(PORT, () => {
+      console.log(`Servidor funcionando en puerto ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Error al iniciar el servidor:', error);
+    process.exit(1);
+  }
+};
+
+
+iniciar()
