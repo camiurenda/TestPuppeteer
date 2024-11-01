@@ -2,6 +2,9 @@ const mongoose = require('mongoose');
 
 const conectarDB = async () => {
     try {
+
+        console.log('Verificando MONGO_DB_URI:', process.env.MONGO_DB_URI ? 'Existe' : 'No existe');
+
         if (!process.env.MONGO_DB_URI) {
             throw new Error('La variable de entorno MONGO_DB_URI no está definida');
         }
