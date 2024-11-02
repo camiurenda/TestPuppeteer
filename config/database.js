@@ -1,62 +1,21 @@
 const mongoose = require('mongoose');
 
-mongoose.set('debug', true);
+// Mostrar el URI en los logs
+console.log('URI de conexión:', process.env.MONGO_DB_URI);
+
 const conectarDB = async () => {
     try {
-        console.log('=== Información de conexión ===');
-        console.log('URI existe:', process.env.MONGO_DB_URI ? 'Sí' : 'No');
-        console.log('Ambiente:', process.env.NODE_ENV || 'development');
-
         if (!process.env.MONGO_DB_URI) {
             throw new Error('La variable de entorno MONGO_DB_URI no está definida');
         }
 
-        const opciones = {
-            retryWrites: true,
-            w: 'majority',
-            connectTimeoutMS: 120000,
-            socketTimeoutMS: 120000,
-            serverSelectionTimeoutMS: 120000,
-            heartbeatFrequencyMS: 2000,
-            maxPoolSize: 10,
-            minPoolSize: 5,
-            tls: true,
-            ssl: true,
-        };
-        
+        // Conectar a MongoDB con una configuración mínima
+        await mongoose.connect(process.env.MONGO_DB_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
 
-        await mongoose.connect(process.env.MONGO_DB_URI, opciones);
         console.log('Conexión exitosa a MongoDB');
-
-        // Manejadores de eventos de conexión
-        mongoose.connection.on('error', (err) => {
-            console.error('Error en la conexión de MongoDB:', err);
-        });
-
-        mongoose.connection.on('disconnected', () => {
-            console.warn('MongoDB desconectado. Intentando reconectar...');
-        });
-
-        mongoose.connection.on('reconnected', () => {
-            console.log('MongoDB reconectado exitosamente');
-        });
-
-        // Manejo de cierre graceful
-        const cerrarConexion = async () => {
-            try {
-                await mongoose.connection.close();
-                console.log('Conexión a MongoDB cerrada correctamente');
-                process.exit(0);
-            } catch (err) {
-                console.error('Error al cerrar la conexión:', err);
-                process.exit(1);
-            }
-        };
-
-        // Manejar señales de terminación
-        process.on('SIGTERM', cerrarConexion);
-        process.on('SIGINT', cerrarConexion);
-
     } catch (error) {
         console.error('=== Error de Conexión ===');
         console.error('Tipo:', error.name);
