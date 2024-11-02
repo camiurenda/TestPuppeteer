@@ -3,6 +3,7 @@ const { createServer } = require("http");
 const { Server } = require("socket.io");
 const { scrapeLogic } = require("./scrapeLogic");
 const { initializeWhatsApp } = require("./whatsappLogic");
+const { conectarDB } = require('./config/database');
 const path = require("path");
 
 const app = express();
@@ -17,6 +18,18 @@ const io = new Server(httpServer, {
 });
 
 const PORT = process.env.PORT || 4000;
+
+conectarDB()
+  .then(() => {
+    // Solo iniciamos el servidor HTTP si la conexión a MongoDB fue exitosa
+    httpServer.listen(PORT, () => {
+      console.log(`Servidor funcionando en puerto ${PORT}`);
+    });
+  })
+  .catch(error => {
+    console.error('Error al iniciar el servidor:', error);
+    process.exit(1); // Terminamos el proceso si no podemos conectar a MongoDB
+  });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -37,8 +50,3 @@ io.on('connection', (socket) => {
 });
 
 initializeWhatsApp(io);
-
-httpServer.listen(PORT, () => {
-  console.log(`Servidor funcionando en puerto ${PORT}`);
-});
-//Comentario para que tome el dockerfile
