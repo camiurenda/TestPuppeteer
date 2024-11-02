@@ -6,6 +6,18 @@ const { scrapeLogic } = require("./scrapeLogic");
 const { initializeWhatsApp } = require("./whatsappLogic");
 const path = require("path");
 
+
+const app = express(); 
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.NODE_ENV === "production" 
+      ? ["https://testpuppeteer-1d96.onrender.com/"] 
+      : ["http://localhost:4000"],
+    methods: ["GET", "POST"]
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 const MONGO_DB_URI = process.env.MONGO_DB_URI;
 
