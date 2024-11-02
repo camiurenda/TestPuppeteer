@@ -6,7 +6,6 @@ const { scrapeLogic } = require("./scrapeLogic");
 const { initializeWhatsApp } = require("./whatsappLogic");
 const path = require("path");
 
-
 const app = express(); 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -28,17 +27,23 @@ const conectarDB = async () => {
       throw new Error('La variable de entorno MONGO_DB_URI no está definida');
     }
 
+    console.log('Intentando conectar a MongoDB Atlas...');
+    
     await mongoose.connect(MONGO_DB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
+      retryWrites: true,
+      w: "majority",
+      serverSelectionTimeoutMS: 60000,
+      connectTimeoutMS: 60000,
+      socketTimeoutMS: 60000
     });
 
-    console.log("Conexión exitosa a MongoDB");
+    console.log('Conexión exitosa a MongoDB Atlas');
+
   } catch (error) {
     console.error("=== Error de Conexión ===");
     console.error("Tipo:", error.name);
     console.error("Mensaje:", error.message);
-    process.exit(1);
+    throw error;
   }
 };
 
@@ -60,7 +65,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// Función principal para inicializar el servidor
 const iniciar = async () => {
   try {
     await conectarDB();
@@ -72,8 +76,14 @@ const iniciar = async () => {
       console.log(`Servidor funcionando en puerto ${PORT}`);
     });
   } catch (error) {
-    console.error("Error al iniciar el servidor:", error);
-    process.exit(1);
+    console.error("Error fatal al iniciar el servidor:", error);
+    // En caso de error de conexión, esperamos 10 segundos y reintentamos
+    if (error.name === 'MongooseServerSelectionError') {
+      console.log('Reintentando conexión en 10 segundos...');
+      setTimeout(iniciar, 10000);
+    } else {
+      process.exit(1);
+    }
   }
 };
 
