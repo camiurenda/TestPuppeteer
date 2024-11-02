@@ -1,6 +1,52 @@
 const { Client } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const puppeteer = require("puppeteer");
+const { OpenAI } = require('openai');
+const Projection = require('./models/projection.model');
+require('dotenv').config();
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+async function processMessage(msg) {
+  try {
+    const proyecciones = await Projection.find({ habilitado: true })
+      .sort({ fechaHora: 1 })
+      .limit(5);
+
+    const contextoPeliculas = proyecciones.map(p => ({
+      pelicula: p.nombrePelicula,
+      cine: p.nombreCine,
+      horario: new Date(p.fechaHora).toLocaleString(),
+      genero: p.genero,
+      director: p.director,
+      precio: p.precio
+    }));
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `Eres un asistente amigable de cine que ayuda a los usuarios que quieren saber que pelis hay para ver. 
+                   Respondes de manera natural y concisa, usando emojis ocasionalmente. 
+                   Si preguntan por la cartelera o películas disponibles, usa esta información: ${JSON.stringify(contextoPeliculas)}.
+                   Puedes asistir con recomendaciones, dando mas informacion de la pelicula, etc. pero no puedes desviarte del tema del cine o la cartelera.
+                   Declina amablemente y redirige la conversacion a la cartelera si esto pasa.`
+        },
+        { role: "user", content: msg.body }
+      ],
+      max_tokens: 150,
+      temperature: 0.7
+    });
+
+    await msg.reply(response.choices[0].message.content);
+  } catch (error) {
+    console.error('Error al procesar mensaje:', error);
+    await msg.reply('Disculpa, tuve un problema al procesar tu mensaje. ¿Podrías intentarlo de nuevo?');
+  }
+}
+
+
 
 const initializeWhatsApp = async (io) => {
   let qrCode = null;
@@ -74,18 +120,7 @@ const initializeWhatsApp = async (io) => {
 
   client.on('message', async (msg) => {
     console.log('MENSAJE RECIBIDO:', msg.body);
-
-    switch(msg.body.toLowerCase()) {
-      case '!ping':
-        await msg.reply('pong');
-        break;
-      case '!status':
-        await msg.reply(`Estado actual: ${clientStatus}`);
-        break;
-      case '!help':
-        await msg.reply('Comandos disponibles:\n!ping - Prueba de conexión\n!status - Ver estado actual');
-        break;
-    }
+    await processMessage(msg);
   });
 
   io.on('connection', (socket) => {
