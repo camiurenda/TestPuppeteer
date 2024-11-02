@@ -41,3 +41,4 @@ initializeWhatsApp(io);
 httpServer.listen(PORT, () => {
   console.log(`Servidor funcionando en puerto ${PORT}`);
 });
+//Comentario para que tome el dockerfile
