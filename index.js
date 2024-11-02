@@ -8,7 +8,14 @@ const path = require("path");
 
 const app = express(); 
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
+
+// Primero configurar Express
+const servidor = app.listen(process.env.PORT || 4000, '0.0.0.0', () => {
+  console.log(`Express server corriendo en puerto ${process.env.PORT || 4000}`);
+});
+
+// Luego configurar Socket.io usando el servidor Express
+const io = new Server(servidor, {
   cors: {
     origin: process.env.NODE_ENV === "production" 
       ? ["https://testpuppeteer-1d96.onrender.com/"] 
@@ -17,7 +24,6 @@ const io = new Server(httpServer, {
   }
 });
 
-const PORT = process.env.PORT || 4000;
 const MONGO_DB_URI = process.env.MONGO_DB_URI;
 
 // Función para conectar a MongoDB
@@ -29,12 +35,10 @@ const conectarDB = async () => {
 
     console.log('Intentando conectar a MongoDB Atlas...');
     
-    await mongoose.connect(MONGO_DB_URI, {
-      retryWrites: true,
-      w: "majority",
-      serverSelectionTimeoutMS: 60000,
-      connectTimeoutMS: 60000,
-      socketTimeoutMS: 60000
+    await mongoose.connect(MONGO_DB_URI + "?retryWrites=true&w=majority", {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 50000,
     });
 
     console.log('Conexión exitosa a MongoDB Atlas');
@@ -70,14 +74,9 @@ const iniciar = async () => {
     await conectarDB();
     console.log("Base de datos conectada");
 
-    initializeWhatsApp(io);
-
-    httpServer.listen(PORT, () => {
-      console.log(`Servidor funcionando en puerto ${PORT}`);
-    });
+    await initializeWhatsApp(io);
   } catch (error) {
-    console.error("Error fatal al iniciar el servidor:", error);
-    // En caso de error de conexión, esperamos 10 segundos y reintentamos
+    console.error("Error al iniciar el servidor:", error);
     if (error.name === 'MongooseServerSelectionError') {
       console.log('Reintentando conexión en 10 segundos...');
       setTimeout(iniciar, 10000);
