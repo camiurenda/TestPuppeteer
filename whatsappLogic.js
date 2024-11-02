@@ -4,8 +4,7 @@ const puppeteer = require("puppeteer");
 const axios = require('axios');
 
 const SERVIDOR_PRINCIPAL = 'https://filmfetcher.onrender.com';
-
-const inicializarWhatsApp = async (io) => {
+const initializeWhatsApp = async (io) => {
     const client = new Client({
         puppeteer: {
             args: [
@@ -41,7 +40,6 @@ const inicializarWhatsApp = async (io) => {
     client.on('message', async (msg) => {
         if (msg.body.toLowerCase() === '!cartelera') {
             try {
-                // Obtener películas del servidor principal
                 const response = await axios.get(`${SERVIDOR_PRINCIPAL}/api/projections/proyecciones-actuales`);
                 const peliculas = response.data;
 
@@ -50,7 +48,6 @@ const inicializarWhatsApp = async (io) => {
                     return;
                 }
 
-                // Crear mensaje de respuesta
                 let respuesta = '*🎬 CARTELERA ACTUAL 🎬*\n\n';
                 
                 peliculas.forEach(pelicula => {
@@ -85,4 +82,4 @@ const inicializarWhatsApp = async (io) => {
     }
 };
 
-module.exports = { inicializarWhatsApp };
+module.exports = { initializeWhatsApp };
