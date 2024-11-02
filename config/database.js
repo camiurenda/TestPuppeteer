@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 
+mongoose.set('debug', true);
 const conectarDB = async () => {
     try {
         console.log('=== Información de conexión ===');
@@ -13,16 +14,16 @@ const conectarDB = async () => {
         const opciones = {
             retryWrites: true,
             w: 'majority',
-            connectTimeoutMS: 30000,
-            socketTimeoutMS: 30000,
-            serverSelectionTimeoutMS: 30000,
+            connectTimeoutMS: 120000,
+            socketTimeoutMS: 120000,
+            serverSelectionTimeoutMS: 120000,
             heartbeatFrequencyMS: 2000,
             maxPoolSize: 10,
             minPoolSize: 5,
-            maxIdleTimeMS: 10000,
             tls: true,
             ssl: true,
         };
+        
 
         await mongoose.connect(process.env.MONGO_DB_URI, opciones);
         console.log('Conexión exitosa a MongoDB');
