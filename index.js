@@ -23,42 +23,70 @@ const io = new Server(httpServer, {
   }
 });
 
-const MONGO_DB_URI = process.env.MONGO_DB_URI;
+let isConnecting = false;
+let connectionAttempts = 0;
+const MAX_RETRIES = 5;
+const RETRY_INTERVAL = 5000;
 
 const conectarDB = async () => {
+  // Evitar múltiples intentos simultáneos
+  if (isConnecting) {
+    console.log('Ya hay un intento de conexión en curso...');
+    return;
+  }
+
+  isConnecting = true;
+  connectionAttempts++;
+
   try {
+    const MONGO_DB_URI = process.env.MONGO_DB_URI;
     if (!MONGO_DB_URI) {
       throw new Error('La variable de entorno MONGO_DB_URI no está definida');
     }
 
-    console.log('Intentando conectar a MongoDB Atlas...');
+    console.log(`Intento de conexión ${connectionAttempts}/${MAX_RETRIES} a MongoDB Atlas...`);
+
+    mongoose.connection.removeAllListeners('disconnected');
     
     await mongoose.connect(MONGO_DB_URI, {
-      serverSelectionTimeoutMS: 50000,
+      serverSelectionTimeoutMS: 30000,
       socketTimeoutMS: 45000,
-      directConnection: false,
-      retryWrites: true,
-      w: 'majority',
-      replicaSet: 'atlas-tepky3-shard-0',
-      authSource: 'admin'
+      maxPoolSize: 10,
+      minPoolSize: 5,
+      bufferCommands: false,
     });
 
     console.log('Conexión exitosa a MongoDB Atlas');
-    
-    mongoose.connection.on('disconnected', () => {
-      console.log('MongoDB desconectado - Intentando reconectar...');
-      setTimeout(conectarDB, 5000);
+    connectionAttempts = 0;
+    isConnecting = false;
+
+    mongoose.connection.once('disconnected', () => {
+      console.log('MongoDB desconectado');
+      if (connectionAttempts < MAX_RETRIES) {
+        console.log(`Intentando reconectar en ${RETRY_INTERVAL/1000} segundos...`);
+        setTimeout(conectarDB, RETRY_INTERVAL);
+      } else {
+        console.error('Se alcanzó el número máximo de intentos de reconexión');
+        process.exit(1);
+      }
     });
+
+    return true;
 
   } catch (error) {
     console.error("=== Error de Conexión ===");
     console.error("Tipo:", error.name);
     console.error("Mensaje:", error.message);
-    if (error.name === 'MongooseServerSelectionError') {
-      console.log('Error de selección de servidor - reintentando en 5 segundos...');
-      setTimeout(conectarDB, 5000);
+
+    isConnecting = false;
+
+    if (connectionAttempts < MAX_RETRIES) {
+      console.log(`Reintentando en ${RETRY_INTERVAL/1000} segundos...`);
+      setTimeout(conectarDB, RETRY_INTERVAL);
+    } else {
+      console.error('Se alcanzó el número máximo de intentos');
+      throw error;
     }
-    throw error;
   }
 };
 
@@ -74,31 +102,34 @@ app.get("/", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: 'OK', mongoConnection: mongoose.connection.readyState });
+  res.status(200).json({ 
+    status: 'OK', 
+    mongoConnection: mongoose.connection.readyState,
+    connectionAttempts 
+  });
 });
 
 io.on("connection", (socket) => {
   console.log("Cliente conectado:", socket.id);
-
   socket.on("disconnect", () => {
     console.log("Cliente desconectado:", socket.id);
   });
 });
 
+
 const iniciar = async () => {
   try {
-    await conectarDB();
-    console.log("Base de datos conectada");
-    await initializeWhatsApp(io);
-    
-  } catch (error) {
-    console.error("Error al iniciar el servidor:", error);
-    if (error.name === 'MongooseServerSelectionError') {
-      console.log('Reintentando conexión en 10 segundos...');
-      setTimeout(iniciar, 10000);
+    const connected = await conectarDB();
+    if (connected) {
+      console.log("Base de datos conectada");
+      await initializeWhatsApp(io);
     }
+  } catch (error) {
+    console.error("Error fatal al iniciar el servidor:", error);
+    process.exit(1);
   }
 };
+
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection:', reason);
@@ -106,6 +137,10 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
+  if (error.name === 'MongooseServerSelectionError') {
+    process.exit(1);
+  }
 });
+
 
 iniciar();
