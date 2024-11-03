@@ -2,8 +2,83 @@ const { Client } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const puppeteer = require("puppeteer");
 const axios = require('axios');
+const OpenAI = require('openai');
+require('dotenv').config();
+
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+});
 
 const SERVIDOR_PRINCIPAL = 'https://filmfetcher.onrender.com';
+
+let carteleraCache = {
+    peliculas: [],
+    lastUpdate: null
+};
+
+async function actualizarCarteleraCache() {
+    try {
+        if (!carteleraCache.lastUpdate || 
+            Date.now() - carteleraCache.lastUpdate > 5 * 60 * 1000) {
+            const response = await axios.get(`${SERVIDOR_PRINCIPAL}/api/projections/proyecciones-actuales`);
+            carteleraCache.peliculas = response.data;
+            carteleraCache.lastUpdate = Date.now();
+        }
+        return carteleraCache.peliculas;
+    } catch (error) {
+        console.error('Error al actualizar caché de cartelera:', error);
+        throw error;
+    }
+}
+
+async function procesarMensajeIA(mensaje, peliculas) {
+    const contextoPeliculas = peliculas.map(p => {
+        const fecha = new Date(p.fechaHora).toLocaleString('es-AR', {
+            day: 'numeric',
+            month: 'long',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        return `${p.nombrePelicula} en ${p.nombreCine} el ${fecha} a $${p.precio || 'precio no disponible'}`;
+    }).join('. ');
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                {
+                    role: "system",
+                    content: `Eres un asistente amigable y conversacional especializado en cine y la cartelera actual.
+                    Debes responder de manera natural y cercana, como si fueras un amigo que conoce muy bien el cine.
+                    
+                    Información actual de la cartelera:
+                    ${contextoPeliculas}
+                    
+                    Pautas importantes:
+                    - Si te preguntan por una película que no está en cartelera, menciona que no está disponible actualmente
+                    - Siempre incluye los horarios y precios cuando sean relevantes para la consulta
+                    - Si te preguntan por recomendaciones, considera los horarios disponibles
+                    - Usa emojis ocasionalmente para hacer la conversación más amena y divertida
+                    - Si no entiendes la consulta, pide amablemente una aclaración
+                    - Si te preguntan por algo no relacionado con películas o la cartelera, responde que solo puedes ayudar con temas de cine`
+                },
+                {
+                    role: "user",
+                    content: mensaje
+                }
+            ],
+            max_tokens: 500,
+            temperature: 0.8
+        });
+
+        return response.choices[0].message.content;
+    } catch (error) {
+        console.error('Error al procesar mensaje con IA:', error);
+        return 'Disculpa, estoy teniendo algunos problemas técnicos. ¿Podrías intentarlo de nuevo en un momento? 🤔';
+    }
+}
+
 const initializeWhatsApp = async (io) => {
     const client = new Client({
         puppeteer: {
@@ -38,39 +113,21 @@ const initializeWhatsApp = async (io) => {
     });
 
     client.on('message', async (msg) => {
-        if (msg.body.toLowerCase() === '!cartelera') {
-            try {
-                const response = await axios.get(`${SERVIDOR_PRINCIPAL}/api/projections/proyecciones-actuales`);
-                const peliculas = response.data;
+        if (msg.isGroupMsg) return;
+        try {
+            const chat = await msg.getChat();
+            await chat.sendStateTyping();
 
-                if (!peliculas.length) {
-                    await msg.reply('No hay películas en cartelera en este momento.');
-                    return;
-                }
+            const peliculas = await actualizarCarteleraCache();
+            const respuesta = await procesarMensajeIA(msg.body, peliculas);
 
-                let respuesta = '*🎬 CARTELERA ACTUAL 🎬*\n\n';
-                
-                peliculas.forEach(pelicula => {
-                    const fecha = new Date(pelicula.fechaHora).toLocaleString('es-AR', {
-                        day: 'numeric',
-                        month: 'long',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
-                    
-                    respuesta += `*${pelicula.nombreCine}*\n`;
-                    respuesta += `🎥 ${pelicula.nombrePelicula}\n`;
-                    respuesta += `📅 ${fecha}\n`;
-                    if (pelicula.sala) respuesta += `🏛️ Sala: ${pelicula.sala}\n`;
-                    if (pelicula.precio) respuesta += `💰 Precio: $${pelicula.precio}\n`;
-                    respuesta += '\n';
-                });
-
-                await msg.reply(respuesta);
-            } catch (error) {
-                console.error('Error al obtener cartelera:', error);
-                await msg.reply('Lo siento, hubo un error al obtener la cartelera.');
-            }
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            
+            await msg.reply(respuesta);
+            await chat.clearState();
+        } catch (error) {
+            console.error('Error al procesar mensaje:', error);
+            await msg.reply('Disculpa, estoy teniendo algunos problemas técnicos. ¿Podrías intentarlo de nuevo en un momento? 🤔');
         }
     });
 
