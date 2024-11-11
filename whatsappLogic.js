@@ -204,7 +204,7 @@ async function procesarMensajeIA(mensaje, peliculas, numero) {
                     content: mensaje
                 }
             ],
-            max_tokens: 250,
+            max_tokens: 2500,
             temperature: 0.7
         });
 
