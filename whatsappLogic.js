@@ -13,28 +13,24 @@ const SERVIDOR_PRINCIPAL = 'https://filmfetcher.onrender.com';
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
+// Estructuras de datos para caché
 let carteleraCache = {
     peliculas: [],
     lastUpdate: null
 };
-
 const peliculasDetallesCache = new Map();
-
-
 const conversacionesCache = new Map();
-
 const TIEMPO_EXPIRACION_CONVERSACION = 30 * 60 * 1000;
-
 const LIMITE_MENSAJES_HISTORIAL = 5;
 
+// Obtiene detalles de una película desde TMDB
 async function obtenerDetallesPelicula(nombrePelicula) {
-
+ // Verificar caché primero
     if (peliculasDetallesCache.has(nombrePelicula)) {
         return peliculasDetallesCache.get(nombrePelicula);
     }
-
+    // Búsqueda en TMDB
     try {
-
         const searchResponse = await axios.get(`${TMDB_BASE_URL}/search/movie`, {
             params: {
                 api_key: TMDB_API_KEY,
@@ -45,7 +41,7 @@ async function obtenerDetallesPelicula(nombrePelicula) {
 
         if (searchResponse.data.results.length > 0) {
             const peliculaId = searchResponse.data.results[0].id;
-
+// Obtener detalles y créditos en paralelo
             const [detalles, creditos] = await Promise.all([
                 axios.get(`${TMDB_BASE_URL}/movie/${peliculaId}`, {
                     params: {
@@ -59,7 +55,7 @@ async function obtenerDetallesPelicula(nombrePelicula) {
                     }
                 })
             ]);
-
+// Procesar y estructurar la información
             const actoresPrincipales = creditos.data.cast
                 .slice(0, 3)
                 .map(actor => actor.name)
@@ -73,7 +69,7 @@ async function obtenerDetallesPelicula(nombrePelicula) {
                 duracion: detalles.data.runtime,
                 puntuacion: detalles.data.vote_average.toFixed(1)
             };
-
+ // Guardar en caché
             peliculasDetallesCache.set(nombrePelicula, detallesPelicula);
             return detallesPelicula;
         }
@@ -83,7 +79,7 @@ async function obtenerDetallesPelicula(nombrePelicula) {
         return null;
     }
 }
-
+//Actualiza la caché de cartelera
 async function actualizarCarteleraCache() {
     try {
         if (!carteleraCache.lastUpdate || 
@@ -109,6 +105,7 @@ async function actualizarCarteleraCache() {
     }
 }
 
+//Gestiona el contexto de las conversaciones con usuarios
 async function limpiarConversacionesAntiguas() {
     const ahora = Date.now();
     for (const [numero, datos] of conversacionesCache.entries()) {
@@ -118,6 +115,7 @@ async function limpiarConversacionesAntiguas() {
     }
 }
 
+// Programar limpieza periódica de conversaciones
 setInterval(limpiarConversacionesAntiguas, 15 * 60 * 1000);
 
 function obtenerContextoConversacion(numero) {
@@ -131,6 +129,7 @@ function obtenerContextoConversacion(numero) {
     return conversacionesCache.get(numero);
 }
 
+ // Mantener solo los últimos mensajes
 function actualizarContextoConversacion(numero, mensaje, respuesta) {
     const contexto = obtenerContextoConversacion(numero);
     contexto.mensajes.push({
@@ -149,6 +148,7 @@ function actualizarContextoConversacion(numero, mensaje, respuesta) {
     actualizarPreferenciasUsuario(contexto, mensaje);
 }
 
+ // Detectar preferencias
 function actualizarPreferenciasUsuario(contexto, mensaje) {
     const mensajeLower = mensaje.toLowerCase();
     
@@ -163,7 +163,7 @@ function actualizarPreferenciasUsuario(contexto, mensaje) {
         contexto.preferencias.horarioPreferido = mensajeLower.includes('noche') ? 'noche' : 'tarde';
     }
 }
-
+   // Preparar contexto de películas para la IA
 async function procesarMensajeIA(mensaje, peliculas, numero) {
     const contexto = obtenerContextoConversacion(numero);
     const contextoPeliculas = peliculas.map(p => {
@@ -215,6 +215,7 @@ async function procesarMensajeIA(mensaje, peliculas, numero) {
     }
 }
 
+// Configurar cliente de WhatsApp
 const initializeWhatsApp = async (io) => {
     const client = new Client({
         puppeteer: {
@@ -229,7 +230,7 @@ const initializeWhatsApp = async (io) => {
                 : puppeteer.executablePath(),
         }
     });
-
+ // Manejar generación de código QR
     client.on('qr', async (qr) => {
         try {
             const qrCode = await qrcode.toDataURL(qr);
@@ -239,7 +240,7 @@ const initializeWhatsApp = async (io) => {
             console.error('Error al generar QR:', error);
         }
     });
-
+  // Manejar estado ready
     client.on('ready', () => {
         console.log('Cliente WhatsApp listo');
         io.emit('whatsappStatus', { 
@@ -247,7 +248,7 @@ const initializeWhatsApp = async (io) => {
             message: '¡WhatsApp está listo!' 
         });
     });
-
+// Manejar mensajes entrantes
     client.on('message', async (msg) => {
         if (msg.isGroupMsg) return;
         
@@ -268,7 +269,7 @@ const initializeWhatsApp = async (io) => {
             await msg.reply('¡Ups! 😅 Algo falló, ¿podrías intentarlo de nuevo?');
         }
     });
-
+// Iniciar cliente
     try {
         await client.initialize();
     } catch (error) {

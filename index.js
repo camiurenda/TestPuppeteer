@@ -8,14 +8,15 @@ const path = require("path");
 const cors = require('cors');
 require('dotenv').config();
 
+// Inicialización de la aplicación Express y el servidor HTTP
 const app = express();
 const httpServer = createServer(app);
 
-// Configuración básica
+// Configuración de middleware básico
 app.use(express.json());
 app.use(cors());
 
-// Configuración Auth0
+// Configuración de autenticación con Auth0
 const config = {
     authRequired: false,
     auth0Logout: true,
@@ -25,10 +26,10 @@ const config = {
     issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`
 };
 
-// Auth middleware
+// Aplica el middleware de autenticación de Auth0
 app.use(auth(config));
 
-// Middleware para verificar autenticación
+// Middleware personalizado para verificar autenticación
 const requiresAuth = (req, res, next) => {
     if (!req.oidc.isAuthenticated()) {
         return res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
@@ -36,12 +37,12 @@ const requiresAuth = (req, res, next) => {
     next();
 };
 
-// Servir unauthorized.html y archivos necesarios sin autenticación
+// Ruta públicas (sin autenticación requerida)
 app.get('/unauthorized.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
 });
 
-// Ruta principal - protegida
+// Ruta principal - protegida con autenticación
 app.get("/", requiresAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -64,7 +65,7 @@ const io = new Server(httpServer, {
     }
 });
 
-// Socket.IO connection handler
+// Manejo de conexiones Socket.IO
 io.on('connection', (socket) => {
     console.log('Cliente conectado:', socket.id);
 
