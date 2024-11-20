@@ -1,55 +1,114 @@
 const puppeteer = require("puppeteer");
 require("dotenv").config();
 
-const scrapeLogic = async (res) => {
-  // Inicialización del navegador con configuraciones de seguridad
-  const browser = await puppeteer.launch({
-    args: [
-      "--disable-setuid-sandbox",  // Deshabilita el sandbox para entornos sin privilegios
-      "--no-sandbox",             // Modo sin sandbox para contenedores
-      "--single-process",         // Ejecuta Chrome en un solo proceso
-      "--no-zygote",             // Deshabilita el proceso zygote
-    ],
-    // Usa el ejecutable de Chrome según el entorno
-    executablePath:
-      process.env.NODE_ENV === "production"
-        ? process.env.PUPPETEER_EXECUTABLE_PATH
-        : puppeteer.executablePath(),
-  });
-
+const scrapeSite = async (url) => {
+  let browser = null;
+  
   try {
-    console.log("Iniciando scraping de books.toscrape.com...");
+    console.log(`[Microservicio] Iniciando scraping de ${url}`);
+    
+    browser = await puppeteer.launch({
+      args: [
+        "--disable-setuid-sandbox",
+        "--no-sandbox",
+        "--single-process",
+        "--no-zygote",
+      ],
+      executablePath:
+        process.env.NODE_ENV === "production"
+          ? process.env.PUPPETEER_EXECUTABLE_PATH
+          : puppeteer.executablePath(),
+    });
+
     const page = await browser.newPage();
     
-    // Navega a la página y espera a que se carguen todos los recursos
-    await page.goto("https://books.toscrape.com/", {
-      waitUntil: 'networkidle0',  // Espera hasta que no haya conexiones de red por 500ms
-      timeout: 30000              // Timeout de 30 segundos
+    // Configurar interceptor de errores
+    page.on('error', err => {
+      console.error(`[Microservicio] Error en la página:`, err);
     });
 
-    console.log("Página cargada, buscando el mensaje...");
-    
-    // Ejecuta JavaScript en el contexto de la página para extraer el texto
-    const welcomeMessage = await page.evaluate(() => {
-      const smallElement = document.querySelector('small');
-      return smallElement ? smallElement.textContent : null;
+    page.on('pageerror', err => {
+      console.error(`[Microservicio] Error de javascript:`, err);
     });
 
-    // Procesa y envía el resultado
-    if (welcomeMessage) {
-      console.log("Mensaje encontrado:", welcomeMessage);
-      res.send(`Mensaje extraído: ${welcomeMessage}`);
-    } else {
-      throw new Error("No se pudo encontrar el elemento <small>");
+    console.log(`[Microservicio] Navegando a ${url}`);
+    const response = await page.goto(url, {
+      waitUntil: 'networkidle0',
+      timeout: 30000
+    });
+
+    if (!response.ok()) {
+      throw new Error(`Error HTTP ${response.status()}: ${response.statusText()}`);
     }
 
-  } catch (e) {
-    // Manejo de errores durante el scraping
-    console.error("Error durante el scraping:", e);
-    res.send(`Ocurrió un error: ${e.message}`);
-  } finally {
-    // Asegura que el navegador se cierre incluso si hay errores
+    console.log(`[Microservicio] Extrayendo contenido HTML`);
+    const contenidoHTML = await page.content();
+    
+    if (!contenidoHTML || contenidoHTML.trim().length === 0) {
+      throw new Error('Contenido HTML vacío');
+    }
+
     await browser.close();
+    browser = null;
+
+    console.log(`[Microservicio] Scraping exitoso para ${url}`);
+    return {
+      success: true,
+      data: contenidoHTML,
+      status: 'ok'
+    };
+
+  } catch (error) {
+    console.error('[Microservicio] Error en scraping:', {
+      url: url,
+      error: error.message,
+      stack: error.stack
+    });
+
+    let mensajeError = 'Error al acceder a la página';
+    if (error.name === 'TimeoutError') {
+      mensajeError = 'Tiempo de espera agotado al cargar la página';
+    } else if (error.message.includes('net::')) {
+      mensajeError = 'Error de red al acceder a la página';
+    }
+
+    return {
+      success: false,
+      error: mensajeError,
+      details: error.message,
+      status: 'error'
+    };
+
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+};
+
+const scrapeLogic = async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({
+      success: false,
+      error: "URL requerida",
+      status: 'error'
+    });
+  }
+
+  try {
+    console.log(`[Microservicio] Recibida petición de scraping para: ${url}`);
+    const resultado = await scrapeSite(url);
+    res.json(resultado);
+  } catch (error) {
+    console.error('[Microservicio] Error en el controlador:', error);
+    res.status(500).json({
+      success: false,
+      error: "Error en el servicio de scraping",
+      details: error.message,
+      status: 'error'
+    });
   }
 };
 

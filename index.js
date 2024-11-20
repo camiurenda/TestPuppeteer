@@ -1,90 +1,98 @@
 const express = require("express");
 const { createServer } = require("http");
-const { Server } = require("socket.io");
-const { scrapeLogic } = require("./scrapeLogic");
-const { initializeWhatsApp } = require("./whatsappLogic");
-const { auth } = require('express-openid-connect');
-const path = require("path");
 const cors = require('cors');
+const { scrapeLogic } = require("./scrapeLogic");
 require('dotenv').config();
 
-// Inicialización de la aplicación Express y el servidor HTTP
 const app = express();
 const httpServer = createServer(app);
 
-// Configuración de middleware básico
-app.use(express.json());
-app.use(cors());
+// Lista de orígenes permitidos
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  'https://filmfetcher.onrender.com',
+  'https://film-fetcher-eta.vercel.app',
+  'https://film-fetcher-exc9.vercel.app'
+];
 
-// Configuración de autenticación con Auth0
-const config = {
-    authRequired: false,
-    auth0Logout: true,
-    secret: process.env.AUTH0_SECRET,
-    baseURL: process.env.BASE_URL || 'http://localhost:4000',
-    clientID: process.env.AUTH0_CLIENT_ID,
-    issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`
-};
+// Configuración de CORS mejorada
+app.use(cors({
+  origin: function(origin, callback) {
+    // Permitir peticiones sin origin (ej: Postman)
+    if (!origin) return callback(null, true);
 
-// Aplica el middleware de autenticación de Auth0
-app.use(auth(config));
-
-// Middleware personalizado para verificar autenticación
-const requiresAuth = (req, res, next) => {
-    if (!req.oidc.isAuthenticated()) {
-        return res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por CORS'));
     }
-    next();
-};
+  },
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'X-Source'],
+  credentials: true,
+  maxAge: 86400 // Cache CORS preflight por 24 horas
+}));
 
-// Ruta públicas (sin autenticación requerida)
-app.get('/unauthorized.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
+// Middleware para logging básico
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('origin')}`);
+  next();
 });
 
-// Ruta principal - protegida con autenticación
-app.get("/", requiresAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Archivos estáticos para rutas autenticadas
-app.use(requiresAuth, express.static(path.join(__dirname, 'public')));
-
-// Rutas API protegidas
-app.get("/api/scrape", requiresAuth, (req, res) => {
-    scrapeLogic(res);
-});
-
-// Socket.IO setup
-const io = new Server(httpServer, {
-    cors: {
-        origin: process.env.NODE_ENV === "production" 
-            ? ["https://testpuppeteer-1d96.onrender.com/"] 
-            : ["http://localhost:4000"],
-        methods: ["GET", "POST"]
+// Ruta de scraping
+app.post("/api/scrape", express.json(), async (req, res) => {
+  try {
+    // Validar origen
+    const origin = req.get('origin');
+    if (origin && !allowedOrigins.includes(origin)) {
+      return res.status(403).json({
+        success: false,
+        error: "Origen no autorizado",
+        status: 'error'
+      });
     }
-});
 
-// Manejo de conexiones Socket.IO
-io.on('connection', (socket) => {
-    console.log('Cliente conectado:', socket.id);
+    // Validar fuente
+    const source = req.get('X-Source');
+    if (!source || source !== 'FilmFetcher') {
+      return res.status(403).json({
+        success: false,
+        error: "Fuente no autorizada",
+        status: 'error'
+      });
+    }
 
-    socket.on('disconnect', () => {
-        console.log('Cliente desconectado:', socket.id);
+    await scrapeLogic(req, res);
+  } catch (error) {
+    console.error('Error en ruta de scraping:', error);
+    res.status(500).json({
+      success: false,
+      error: "Error interno del servidor",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      status: 'error'
     });
+  }
 });
 
-// Inicializar WhatsApp
-initializeWhatsApp(io);
+// Error handler global
+app.use((err, req, res, next) => {
+  console.error('Error no manejado:', err);
+  res.status(500).json({
+    success: false,
+    error: "Error interno del servidor",
+    status: 'error'
+  });
+});
 
-// Iniciar servidor
 const PORT = process.env.PORT || 4000;
 httpServer.listen(PORT, () => {
-    console.log(`Servidor funcionando en puerto ${PORT}`);
+  console.log(`Servidor de scraping funcionando en puerto ${PORT}`);
 });
 
-// Manejo de errores global
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send('¡Algo salió mal!');
-});
+module.exports = app;
