@@ -14,7 +14,7 @@ const httpServer = createServer(app);
 // Configuración básica
 app.use(express.json());
 
-// CORS configuración
+// Lista de orígenes permitidos
 const allowedOrigins = [
     'http://localhost:3000',
     'http://localhost:5000',
@@ -24,10 +24,27 @@ const allowedOrigins = [
     'https://testpuppeteer-1d96.onrender.com'
 ];
 
-app.use(cors({
-    origin: allowedOrigins,
-    credentials: true
-}));
+// CORS configuración más permisiva para rutas públicas
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    // Si es una ruta de API, aplicar restricciones de CORS
+    if (req.path.startsWith('/api')) {
+        if (origin && allowedOrigins.includes(origin)) {
+            res.header('Access-Control-Allow-Origin', origin);
+            res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.header('Access-Control-Allow-Headers', 'Content-Type, X-Source');
+            res.header('Access-Control-Allow-Credentials', 'true');
+        }
+        // Si es OPTIONS, responder inmediatamente
+        if (req.method === 'OPTIONS') {
+            return res.status(200).end();
+        }
+    } else {
+        // Para rutas no-API, ser más permisivo
+        res.header('Access-Control-Allow-Origin', '*');
+    }
+    next();
+});
 
 // Configuración Auth0
 const config = {
@@ -50,12 +67,18 @@ const requiresAuth = (req, res, next) => {
     next();
 };
 
-// Health check endpoint (nuevo)
+// Health check endpoint (sin restricciones)
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Servir unauthorized.html y archivos necesarios sin autenticación
+// Ruta de callback de Auth0
+app.get('/callback', (req, res) => {
+    // Auth0 manejará esta ruta automáticamente
+    console.log('Callback de Auth0 recibido');
+});
+
+// Servir unauthorized.html sin autenticación
 app.get('/unauthorized.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
 });
@@ -71,17 +94,22 @@ app.use(requiresAuth, express.static(path.join(__dirname, 'public')));
 // Rutas API protegidas
 app.post("/api/scrape", async (req, res) => {
     try {
-        // Validar fuente solo si no es una solicitud autenticada
-        if (!req.oidc.isAuthenticated()) {
-            const source = req.get('X-Source');
-            if (!source || source !== 'FilmFetcher') {
-                return res.status(403).json({
-                    success: false,
-                    error: "Fuente no autorizada",
-                    status: 'error'
-                });
-            }
+        // Si la petición está autenticada, permitirla
+        if (req.oidc.isAuthenticated()) {
+            await scrapeLogic(req, res);
+            return;
         }
+
+        // Si no está autenticada, verificar el header X-Source
+        const source = req.get('X-Source');
+        if (!source || source !== 'FilmFetcher') {
+            return res.status(403).json({
+                success: false,
+                error: "Fuente no autorizada",
+                status: 'error'
+            });
+        }
+
         await scrapeLogic(req, res);
     } catch (error) {
         console.error('Error en scraping:', error);
@@ -97,9 +125,10 @@ app.post("/api/scrape", async (req, res) => {
 const io = new Server(httpServer, {
     cors: {
         origin: process.env.NODE_ENV === "production" 
-            ? ["https://testpuppeteer-1d96.onrender.com/"] 
+            ? ["https://testpuppeteer-1d96.onrender.com"] 
             : ["http://localhost:4000"],
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
 
@@ -123,6 +152,10 @@ httpServer.listen(PORT, () => {
 
 // Manejo de errores global
 app.use((err, req, res, next) => {
-    console.error(err.stack);
+    console.error('Error no manejado:', err.stack);
+    // Si la respuesta ya ha sido enviada, no intentar enviar otra
+    if (res.headersSent) {
+        return next(err);
+    }
     res.status(500).send('¡Algo salió mal!');
 });
