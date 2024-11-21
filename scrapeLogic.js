@@ -22,36 +22,28 @@ const scrapeSite = async (url) => {
 
     const page = await browser.newPage();
     
-    // Configurar interceptor de errores
-    page.on('error', err => {
-      console.error(`[Microservicio] Error en la página:`, err);
-    });
-
-    page.on('pageerror', err => {
-      console.error(`[Microservicio] Error de javascript:`, err);
-    });
-
+    // Configurar timeouts
+    await page.setDefaultNavigationTimeout(60000);
+    await page.setDefaultTimeout(60000);
+    
     console.log(`[Microservicio] Navegando a ${url}`);
-    const response = await page.goto(url, {
-      waitUntil: 'networkidle0',
-      timeout: 30000
+    await page.goto(url, {
+      waitUntil: ['domcontentloaded', 'networkidle0'],
+      timeout: 60000
     });
 
-    if (!response.ok()) {
-      throw new Error(`Error HTTP ${response.status()}: ${response.statusText()}`);
-    }
+    // Esperar un momento adicional
+    await page.waitForTimeout(5000);
 
     console.log(`[Microservicio] Extrayendo contenido HTML`);
-    const contenidoHTML = await page.content();
+    const contenidoHTML = await page.evaluate(() => document.documentElement.outerHTML);
     
-    if (!contenidoHTML || contenidoHTML.trim().length === 0) {
+    if (!contenidoHTML) {
       throw new Error('Contenido HTML vacío');
     }
 
-    await browser.close();
-    browser = null;
-
-    console.log(`[Microservicio] Scraping exitoso para ${url}`);
+    console.log(`[Microservicio] Contenido HTML obtenido, longitud: ${contenidoHTML.length}`);
+    
     return {
       success: true,
       data: contenidoHTML,
@@ -65,23 +57,21 @@ const scrapeSite = async (url) => {
       stack: error.stack
     });
 
-    let mensajeError = 'Error al acceder a la página';
-    if (error.name === 'TimeoutError') {
-      mensajeError = 'Tiempo de espera agotado al cargar la página';
-    } else if (error.message.includes('net::')) {
-      mensajeError = 'Error de red al acceder a la página';
-    }
-
     return {
       success: false,
-      error: mensajeError,
-      details: error.message,
+      error: error.message,
+      details: error.stack,
       status: 'error'
     };
 
   } finally {
     if (browser) {
-      await browser.close();
+      try {
+        await browser.close();
+        console.log('[Microservicio] Navegador cerrado correctamente');
+      } catch (error) {
+        console.error('[Microservicio] Error al cerrar el navegador:', error);
+      }
     }
   }
 };
@@ -100,13 +90,22 @@ const scrapeLogic = async (req, res) => {
   try {
     console.log(`[Microservicio] Recibida petición de scraping para: ${url}`);
     const resultado = await scrapeSite(url);
+    
+    if (!resultado.data && resultado.success) {
+      return res.status(500).json({
+        success: false,
+        error: "No se pudo obtener el contenido HTML",
+        status: 'error'
+      });
+    }
+    
     res.json(resultado);
   } catch (error) {
     console.error('[Microservicio] Error en el controlador:', error);
     res.status(500).json({
       success: false,
       error: "Error en el servicio de scraping",
-      details: error.message,
+      details: error.stack,
       status: 'error'
     });
   }
