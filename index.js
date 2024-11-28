@@ -2,6 +2,7 @@ const express = require("express");
 const { createServer } = require("http");
 const cors = require('cors');
 const { scrapeLogic } = require("./scrapeLogic");
+const schedulerLogic = require("./Services/scheduleLogic.service");
 require('dotenv').config();
 
 const app = express();
@@ -75,6 +76,85 @@ app.post("/api/scrape", express.json(), async (req, res) => {
       success: false,
       error: "Error interno del servidor",
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      status: 'error'
+    });
+  }
+});
+
+// Endpoints de Scheduling
+app.post('/api/schedule', express.json(), async (req, res) => {
+  try {
+    const scheduleConfig = req.body;
+    console.log(`[Schedule] Agregando nuevo schedule para ${scheduleConfig.url}`);
+    
+    if (!scheduleConfig.id || !scheduleConfig.url || !scheduleConfig.proximaEjecucion) {
+      return res.status(400).json({
+        success: false,
+        error: "Configuración incompleta",
+        status: 'error'
+      });
+    }
+
+    const result = schedulerLogic.agregarSchedule(scheduleConfig);
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Schedule] Error al agregar schedule:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+app.delete('/api/schedule/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`[Schedule] Cancelando schedule ${id}`);
+    
+    const result = schedulerLogic.cancelarSchedule(id);
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Schedule] Error al cancelar schedule:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+app.get('/api/schedule/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`[Schedule] Consultando estado de schedule ${id}`);
+    
+    const result = schedulerLogic.obtenerEstado(id);
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Schedule] Error al obtener estado:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+app.get('/api/schedules', async (req, res) => {
+  try {
+    console.log('[Schedule] Consultando todos los schedules');
+    const result = schedulerLogic.obtenerTodos();
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Schedule] Error al obtener schedules:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
       status: 'error'
     });
   }
