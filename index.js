@@ -1,8 +1,12 @@
 const express = require("express");
 const { createServer } = require("http");
-const cors = require('cors');
+const { Server } = require("socket.io");
 const { scrapeLogic } = require("./scrapeLogic");
 const schedulerLogic = require("./Services/scheduleLogic.service");
+const { initializeWhatsApp } = require("./whatsappLogic");
+const { auth } = require('express-openid-connect');
+const path = require("path");
+const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
@@ -35,11 +39,51 @@ app.use(cors({
   maxAge: 86400 // Cache CORS preflight por 24 horas
 }));
 
+// Configuración Auth0
+const config = {
+  authRequired: false,
+  auth0Logout: true,
+  secret: process.env.AUTH0_SECRET,
+  baseURL: process.env.BASE_URL || 'http://localhost:4000',
+  clientID: process.env.AUTH0_CLIENT_ID,
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`
+};
+
+// Auth middleware
+app.use(auth(config));
+
+// Middleware para verificar autenticación
+const requiresAuth = (req, res, next) => {
+  if (!req.oidc.isAuthenticated()) {
+      return res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
+  }
+  next();
+};
+
 // Middleware para logging básico
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('origin')}`);
   next();
 });
+
+app.get('/callback', (req, res) => {
+  // Auth0 manejará esta ruta automáticamente
+  console.log('Callback de Auth0 recibido');
+});
+
+// Servir unauthorized.html sin autenticación
+app.get('/unauthorized.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'unauthorized.html'));
+});
+
+// Ruta principal - protegida
+app.get("/", requiresAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Archivos estáticos para rutas autenticadas
+app.use(requiresAuth, express.static(path.join(__dirname, 'public')));
+
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
