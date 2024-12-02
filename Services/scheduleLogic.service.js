@@ -1,4 +1,3 @@
-// Services/schedulerLogic.js
 const TimerManager = require('./timerManager.service');
 
 class ScheduleLogic {
@@ -13,12 +12,9 @@ class ScheduleLogic {
         const ejecutarScraping = async () => {
             try {
                 console.log(`[Microservicio] Ejecutando scraping para ${url}`);
-                // Notificar al servidor principal que comenzó la ejecución
                 await this.notificarEstado(id, 'ejecutando');
                 
                 const resultado = await this.ejecutarScraping(url);
-                
-                // Notificar resultado
                 await this.notificarResultado(id, resultado);
                 
                 return resultado;
@@ -41,6 +37,16 @@ class ScheduleLogic {
             status: 'programado',
             proximaEjecucion
         };
+    }
+
+    async ejecutarScraping(url) {
+        try {
+            const response = await fetch(url);
+            return await response.text();
+        } catch (error) {
+            console.error('Error en scraping:', error);
+            throw error;
+        }
     }
 
     async notificarEstado(id, estado) {
