@@ -7,13 +7,23 @@ const { initializeWhatsApp } = require("./whatsappLogic");
 const { auth } = require('express-openid-connect');
 const path = require("path");
 const cors = require('cors');
+const morgan = require('morgan');
 require('dotenv').config();
 
 const app = express();
 const httpServer = createServer(app);
 
+morgan.token('request-body', (req) => JSON.stringify(req.body));
+morgan.token('response-body', (req, res) => res.responseBody);
+
+app.use(morgan(':method :url :status :response-time ms :request-body :response-body', {
+    skip: (req) => req.path === '/api/health'
+}));
+
 // Configuración básica
 app.use(express.json());
+app.use(cors());
+
 
 const allowedOrigins = [
     'http://localhost:3000',
@@ -46,7 +56,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configuración Auth0
 const config = {
     authRequired: false,
     auth0Logout: true,
@@ -67,7 +76,6 @@ const requiresAuth = (req, res, next) => {
     next();
 };
 
-// Health check endpoint (sin restricciones)
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -87,31 +95,24 @@ app.get("/", requiresAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Archivos estáticos para rutas autenticadas
-app.use(requiresAuth, express.static(path.join(__dirname, 'public')));
+
 
 // Ruta de scraping con verificación de autenticación o fuente
 app.post("/api/scrape", async (req, res) => {
     try {
-        // Si la petición está autenticada, permitirla
-        if (req.oidc.isAuthenticated()) {
-            await scrapeLogic(req, res);
-            return;
-        }
-
-        // Validar origen
         const origin = req.get('origin');
-        if (origin && !allowedOrigins.includes(origin)) {
-            return res.status(403).json({
-                success: false,
-                error: "Origen no autorizado",
-                status: 'error'
-            });
-        }
-
-        // Validar fuente
         const source = req.get('X-Source');
+        
+        console.log('📝 [Microservicio] Solicitud recibida:', {
+            origin,
+            source,
+            headers: req.headers,
+            body: req.body
+        });
+
+        // Validar solo la fuente
         if (!source || source !== 'FilmFetcher') {
+            console.log('❌ [Microservicio] Fuente no autorizada:', source);
             return res.status(403).json({
                 success: false,
                 error: "Fuente no autorizada",
@@ -121,15 +122,16 @@ app.post("/api/scrape", async (req, res) => {
 
         await scrapeLogic(req, res);
     } catch (error) {
-        console.error('Error en scraping:', error);
+        console.error('❌ [Microservicio] Error en scraping:', error);
         res.status(500).json({
             success: false,
-            error: "Error interno del servidor",
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            error: error.message,
             status: 'error'
         });
     }
 });
+
+
 
 // Nuevos endpoints de Scheduling
 app.post('/api/schedule', express.json(), async (req, res) => {
@@ -210,6 +212,9 @@ app.get('/api/schedules', async (req, res) => {
     }
 });
 
+// Archivos estáticos para rutas autenticadas
+app.use(requiresAuth, express.static(path.join(__dirname, 'public')));
+
 // Socket.IO setup
 const io = new Server(httpServer, {
     cors: {
@@ -248,7 +253,9 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 httpServer.listen(PORT, () => {
-    console.log(`Servidor de scraping funcionando en puerto ${PORT}`);
+    console.log(`\n🚀 Servidor de scraping iniciado en puerto ${PORT}`);
+    console.log(`📝 Logging configurado y activo`);
+    console.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'desarrollo'}\n`);
 });
 
 module.exports = app;

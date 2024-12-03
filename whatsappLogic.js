@@ -235,7 +235,6 @@ const initializeWhatsApp = async (io) => {
         try {
             const qrCode = await qrcode.toDataURL(qr);
             io.emit('whatsappQR', { qrCode });
-            console.log('Nuevo código QR generado');
         } catch (error) {
             console.error('Error al generar QR:', error);
         }
