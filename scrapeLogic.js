@@ -64,6 +64,7 @@ const scrapeSite = async (url) => {
         });
 
         console.log('📦 Contenido extraído:', {
+            HTML: contenidoHTML.html,
             longitud: contenidoHTML.html.length,
             elementos: contenidoHTML.stats.elementCount,
             titulo: contenidoHTML.stats.title
