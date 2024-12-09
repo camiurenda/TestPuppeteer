@@ -222,16 +222,16 @@ const initializeWhatsApp = async (io) => {
 
     client.on('qr', async (qr) => {
         try {
-            console.log(`🔄 [WhatsApp] Generando código QR...`);
             const qrCode = await qrcode.toDataURL(qr);
             io.emit('whatsappQR', { qrCode });
+            console.log('Nuevo código QR generado');
         } catch (error) {
-            console.error(`❌ [WhatsApp] Error al generar QR:`, error);
+            console.error('Error al generar QR:', error);
         }
     });
-
+  // Manejar estado ready
     client.on('ready', () => {
-        console.log(`✨ [WhatsApp] Cliente listo y operativo`);
+        console.log('Cliente WhatsApp listo');
         io.emit('whatsappStatus', { 
             status: 'ready',
             message: '¡WhatsApp está listo!' 
