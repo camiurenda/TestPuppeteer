@@ -5,284 +5,332 @@ const axios = require('axios');
 const OpenAI = require('openai');
 require('dotenv').config();
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+class CarteleraManager {
+    constructor() {
+        this.cache = {
+            peliculas: [],
+            lastUpdate: null
+        };
+        this.CACHE_DURATION = 5 * 60 * 1000;
+        this.SERVIDOR_PRINCIPAL = process.env.MAIN_SERVER_URL || 'https://filmfetcher.onrender.com';
+    }
 
-const SERVIDOR_PRINCIPAL = 'https://filmfetcher.onrender.com';
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+    ajustarZonaHoraria(fecha) {
+        return new Date(fecha.getTime() + (3 * 60 * 60 * 1000));
+    }
 
-let carteleraCache = {
-    peliculas: [],
-    lastUpdate: null
-};
-
-const conversacionesCache = new Map();
-const TIEMPO_EXPIRACION_CONVERSACION = 30 * 60 * 1000;
-const LIMITE_MENSAJES_HISTORIAL = 5;
-
-function ajustarZonaHoraria(fecha) {
-    return new Date(fecha.getTime() + (3 * 60 * 60 * 1000));
-}
-
-async function obtenerCartelera() {
-    console.log(`🔄 [Cartelera] Verificando necesidad de actualización...`);
-    try {
+    async obtenerCartelera() {
         const ahora = new Date();
-        if (!carteleraCache.lastUpdate || 
-            Date.now() - carteleraCache.lastUpdate > 5 * 60 * 1000) {
-            
-            console.log(`📥 [Cartelera] Obteniendo proyecciones desde el servidor...`);
-            const response = await axios.get(`${SERVIDOR_PRINCIPAL}/api/projections/proyecciones-actuales`);
-            
-            const peliculasHoy = response.data.filter(pelicula => {
-                const fechaOriginal = new Date(pelicula.fechaHora);
-                const fechaAjustada = ajustarZonaHoraria(fechaOriginal);
+        if (this.necesitaActualizacion()) {
+            await this.actualizarCache(ahora);
+        }
+        return this.cache.peliculas;
+    }
+
+    necesitaActualizacion() {
+        return !this.cache.lastUpdate || 
+               Date.now() - this.cache.lastUpdate > this.CACHE_DURATION;
+    }
+
+    async actualizarCache(ahora) {
+        try {
+            const response = await axios.get(`${this.SERVIDOR_PRINCIPAL}/api/projections/proyecciones-actuales`);
+            this.cache.peliculas = response.data.filter(pelicula => {
+                const fechaAjustada = this.ajustarZonaHoraria(new Date(pelicula.fechaHora));
                 return fechaAjustada >= ahora;
             });
-
-            console.log(`✅ [Cartelera] Datos filtrados: ${peliculasHoy.length} películas para hoy y fechas posteriores`);
-            
-            carteleraCache.peliculas = peliculasHoy;
-            carteleraCache.lastUpdate = Date.now();
+            this.cache.lastUpdate = Date.now();
+        } catch (error) {
+            console.error(`❌ [Cartelera] Error actualizando cache:`, error);
+            throw error;
         }
-        
-        return carteleraCache.peliculas;
-    } catch (error) {
-        console.error(`❌ [Cartelera] Error en obtención de cartelera:`, error);
-        throw error;
     }
 }
 
-async function obtenerDetallesPelicula(nombrePelicula) {
-    console.log(`🎬 [TMDB] Solicitando detalles adicionales para: "${nombrePelicula}"`);
-    try {
-        const response = await axios.get(`${TMDB_BASE_URL}/search/movie`, {
-            params: {
-                api_key: TMDB_API_KEY,
-                query: nombrePelicula,
-                language: 'es-ES'
-            }
-        });
+class ConversacionManager {
+    constructor() {
+        this.conversaciones = new Map();
+        this.TIEMPO_EXPIRACION = 30 * 60 * 1000;
+        this.LIMITE_MENSAJES = 5;
+        this.iniciarLimpieza();
+    }
 
-        if (response.data.results.length > 0) {
-            const pelicula = response.data.results[0];
-            const detallesCompletos = await axios.get(`${TMDB_BASE_URL}/movie/${pelicula.id}`, {
-                params: {
-                    api_key: TMDB_API_KEY,
-                    language: 'es-ES',
-                    append_to_response: 'credits'
-                }
+    obtenerContexto(numero) {
+        if (!this.conversaciones.has(numero)) {
+            this.conversaciones.set(numero, {
+                mensajes: [],
+                ultimaActividad: Date.now(),
+                preferencias: {}
             });
-
-            return {
-                sinopsisDetallada: detallesCompletos.data.overview,
-                reparto: detallesCompletos.data.credits.cast.slice(0, 5).map(actor => actor.name).join(', '),
-                director: detallesCompletos.data.credits.crew
-                    .find(crew => crew.job === 'Director')?.name || 'No especificado',
-                generos: detallesCompletos.data.genres.map(g => g.name).join(', '),
-                puntuacion: detallesCompletos.data.vote_average.toFixed(1)
-            };
         }
-        return null;
-    } catch (error) {
-        console.error(`❌ [TMDB] Error al obtener detalles adicionales:`, error);
-        return null;
+        return this.conversaciones.get(numero);
+    }
+
+    actualizarContexto(numero, mensaje, respuesta) {
+        const contexto = this.obtenerContexto(numero);
+        contexto.mensajes.push(
+            { role: "user", content: mensaje },
+            { role: "assistant", content: respuesta }
+        );
+        
+        if (contexto.mensajes.length > this.LIMITE_MENSAJES * 2) {
+            contexto.mensajes = contexto.mensajes.slice(-this.LIMITE_MENSAJES * 2);
+        }
+        
+        contexto.ultimaActividad = Date.now();
+    }
+
+    iniciarLimpieza() {
+        setInterval(() => this.limpiarConversacionesAntiguas(), 15 * 60 * 1000);
+    }
+
+    limpiarConversacionesAntiguas() {
+        const ahora = Date.now();
+        for (const [numero, datos] of this.conversaciones.entries()) {
+            if (ahora - datos.ultimaActividad > this.TIEMPO_EXPIRACION) {
+                this.conversaciones.delete(numero);
+            }
+        }
     }
 }
 
-async function procesarMensajeIA(mensaje, peliculas, numero) {
-    console.log(`🤖 [IA] Procesando mensaje para ${numero}: "${mensaje}"`);
-    const contexto = obtenerContextoConversacion(numero);
+class IAService {
+    constructor() {
+        this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        this.TMDB_API_KEY = process.env.TMDB_API_KEY;
+        this.TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+    }
 
-    const contextoPeliculas = peliculas.map(p => {
-        const fechaOriginal = new Date(p.fechaHora);
-        const fechaAjustada = ajustarZonaHoraria(fechaOriginal);
+    async procesarMensaje(mensaje, peliculas, numero, contextoConversacion) {
+        const contextoPeliculas = this.prepararContextoPeliculas(peliculas);
+        const respuestaIA = await this.obtenerRespuestaIA(mensaje, contextoPeliculas, contextoConversacion);
         
-        const fecha = fechaAjustada.toLocaleString('es-AR', {
-            day: 'numeric',
-            month: 'long',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        if (respuestaIA.includes('DETALLES_PELICULA:')) {
+            return await this.procesarDetallesPelicula(respuestaIA);
+        }
+        
+        return respuestaIA;
+    }
 
-        return `${p.nombrePelicula} en ${p.nombreCine} el ${fecha} a $${p.precio || 'precio no disponible'}`;
-    }).join('. ');
+    prepararContextoPeliculas(peliculas) {
+        return peliculas.map(p => {
+            const fechaAjustada = new CarteleraManager().ajustarZonaHoraria(new Date(p.fechaHora));
+            const fecha = fechaAjustada.toLocaleString('es-AR', {
+                day: 'numeric',
+                month: 'long',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            return `${p.nombrePelicula} en ${p.nombreCine} el ${fecha} a $${p.precio || 'precio no disponible'}`;
+        }).join('. ');
+    }
 
-    try {
-        const response = await openai.chat.completions.create({
+    async obtenerRespuestaIA(mensaje, contextoPeliculas, contexto) {
+        const response = await this.openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
                 {
                     role: "system",
-                    content: `Eres un asistente de cine conciso y eficiente. Contexto actual:
-                    - Cartelera: ${contextoPeliculas}
-                    - Preferencias del usuario: ${JSON.stringify(contexto.preferencias)}
-                    
-                    Directrices:
-                    1. Si el usuario pregunta por una película específica, indica que puede solicitar más detalles.
-                    2. Responde en máximo 2-3 oraciones para preguntas generales.
-                    3. Usa máximo 1-2 emojis por respuesta
-                    4. Si no encuentras información, indícalo claramente
-                    5. Si el usuario pide más información sobre una película específica, responde "DETALLES_PELICULA:nombre_pelicula"
-                    6. Menciona pelis de varios cines si puedes
-                    7. Siempre recuerda donde la emiten
-                    8. No pongas la puntuación salvo que te la pregunten.
-                    9. Usa un solo * al formatear la respuesta, es para whatsapp
-                    10. Te creó Camila Urenda, como proyecto final de analista en sistemas, para el colectivo artístico SIGILIO.
-                    IMPORTANTISIMO, NO TE INVOLUCRES EN CONVERSACION QUE NO SEA SOBRE LA CARTELERA, a excepción de que te pregunten quien te creó, en cuyo caso tienes permitido contestar.`
+                    content: this.obtenerPromptBase(contextoPeliculas, contexto)
                 },
                 ...contexto.mensajes.slice(-6),
-                {
-                    role: "user",
-                    content: mensaje
-                }
+                { role: "user", content: mensaje }
             ],
             max_tokens: 2500,
             temperature: 0.7
         });
-
-        let respuesta = response.choices[0].message.content;
-        
-        if (respuesta.includes('DETALLES_PELICULA:')) {
-            const nombrePelicula = respuesta.split(':')[1].trim();
-            console.log(`🎬 [IA] Solicitando detalles adicionales para: ${nombrePelicula}`);
-            
-            const detalles = await obtenerDetallesPelicula(nombrePelicula);
-            if (detalles) {
-                respuesta = `📽️ Detalles de "${nombrePelicula}":\n\n` +
-                          `📖 Sinopsis: ${detalles.sinopsisDetallada}\n\n` +
-                          `🎭 Reparto: ${detalles.reparto}\n` +
-                          `🎬 Director: ${detalles.director}\n` +
-                          `🎪 Géneros: ${detalles.generos}\n` +
-                          `⭐ Puntuación: ${detalles.puntuacion}/10`;
-            }
-        }
-
-        return respuesta;
-    } catch (error) {
-        console.error(`❌ [IA] Error al procesar mensaje:`, error);
-        return '¡Ups! 😅 Estoy teniendo problemas técnicos, ¿podrías intentarlo de nuevo?';
+        return response.choices[0].message.content;
     }
-}
 
-function obtenerContextoConversacion(numero) {
-    if (!conversacionesCache.has(numero)) {
-        conversacionesCache.set(numero, {
-            mensajes: [],
-            ultimaActividad: Date.now(),
-            preferencias: {}
+    obtenerPromptBase(contextoPeliculas, contexto) {
+        return `Eres FilmFetcher, un asistente que sabe sobre las carteleras de cine de buenos aires. Contexto actual:
+        - Cartelera: ${contextoPeliculas}
+        - Preferencias del usuario: ${JSON.stringify(contexto.preferencias)}
+        
+        Directrices:
+        1. Al saludar, te presentas y mencionas cual es tu función
+        2. Si el usuario pregunta por una película específica, busca los detalles.
+        3. Responde en máximo 2-3 oraciones para preguntas generales.
+        4. Usa máximo 1-2 emojis por respuesta
+        5. Si no encuentras información, indícalo claramente y redirecciona a alguna peli que si conozcas.
+        6. Si te preguntan por determinado dia o fin de semana, trata de ser variado en cuanto a cines con tu respuesta
+        7. SIEMPRE recuerda en el mensaje donde emitirán la película, el cine y la hora. Esto incluye cuando te piden mas info de una peli.
+        8. El texto saldra en un chat de whatsapp, usa simbolos como * y _ para enfasis de manera acorde.
+        9. Si te preguntan, te creó Camila Urenda, como proyecto final de analista en sistemas, para el colectivo artístico SIGILIO.
+        10. Si te preguntan por la "mejor" o "peor" película, la mas valorada, debes decir que es algo subjetivo, que depende de cada uno, y debes preguntar que le gustaría ver, para recomendar algo en el proximo mensaje.
+        IMPORTANTISIMO, NO TE INVOLUCRES EN CONVERSACION QUE NO SEA SOBRE LA CARTELERA, a excepción de que te pregunten quien te creó, en cuyo caso tienes permitido contestar.`;
+    }
+
+    async procesarDetallesPelicula(respuesta) {
+        const nombrePelicula = respuesta.split(':')[1].trim();
+        const detalles = await this.obtenerDetallesPelicula(nombrePelicula);
+        
+        if (detalles) {
+            return this.formatearDetallesPelicula(nombrePelicula, detalles);
+        }
+        return respuesta;
+    }
+
+    async obtenerDetallesPelicula(nombrePelicula) {
+        try {
+            const peliculaBase = await this.buscarPelicula(nombrePelicula);
+            if (!peliculaBase) return null;
+
+            const detallesCompletos = await this.obtenerDetallesCompletos(peliculaBase.id);
+            return this.procesarDetallesCompletos(detallesCompletos);
+        } catch (error) {
+            console.error(`❌ [TMDB] Error al obtener detalles:`, error);
+            return null;
+        }
+    }
+
+    async buscarPelicula(nombrePelicula) {
+        const response = await axios.get(`${this.TMDB_BASE_URL}/search/movie`, {
+            params: {
+                api_key: this.TMDB_API_KEY,
+                query: nombrePelicula,
+                language: 'es-ES'
+            }
+        });
+        return response.data.results[0];
+    }
+
+    async obtenerDetallesCompletos(peliculaId) {
+        return await axios.get(`${this.TMDB_BASE_URL}/movie/${peliculaId}`, {
+            params: {
+                api_key: this.TMDB_API_KEY,
+                language: 'es-ES',
+                append_to_response: 'credits'
+            }
         });
     }
-    return conversacionesCache.get(numero);
-}
 
-function actualizarContextoConversacion(numero, mensaje, respuesta) {
-    const contexto = obtenerContextoConversacion(numero);
-    contexto.mensajes.push(
-        { role: "user", content: mensaje },
-        { role: "assistant", content: respuesta }
-    );
-
-    if (contexto.mensajes.length > LIMITE_MENSAJES_HISTORIAL * 2) {
-        contexto.mensajes = contexto.mensajes.slice(-LIMITE_MENSAJES_HISTORIAL * 2);
+    procesarDetallesCompletos(response) {
+        return {
+            sinopsisDetallada: response.data.overview,
+            reparto: response.data.credits.cast.slice(0, 5).map(actor => actor.name).join(', '),
+            director: response.data.credits.crew.find(crew => crew.job === 'Director')?.name || 'No especificado',
+            generos: response.data.genres.map(g => g.name).join(', '),
+            puntuacion: response.data.vote_average.toFixed(1)
+        };
     }
 
-    contexto.ultimaActividad = Date.now();
-}
-
-async function limpiarConversacionesAntiguas() {
-    console.log(`🧹 [Chat] Limpiando conversaciones antiguas...`);
-    const ahora = Date.now();
-    for (const [numero, datos] of conversacionesCache.entries()) {
-        if (ahora - datos.ultimaActividad > TIEMPO_EXPIRACION_CONVERSACION) {
-            conversacionesCache.delete(numero);
-        }
+    formatearDetallesPelicula(nombrePelicula, detalles) {
+        return `📽️ Detalles de "${nombrePelicula}":\n\n` +
+               `📖 Sinopsis: ${detalles.sinopsisDetallada}\n\n` +
+               `🎭 Reparto: ${detalles.reparto}\n` +
+               `🎬 Director: ${detalles.director}\n` +
+               `🎪 Géneros: ${detalles.generos}\n`
     }
 }
 
-setInterval(limpiarConversacionesAntiguas, 15 * 60 * 1000);
+class WhatsAppBot {
+    constructor(io) {
+        this.io = io;
+        this.carteleraManager = new CarteleraManager();
+        this.conversacionManager = new ConversacionManager();
+        this.iaService = new IAService();
+        this.client = this.configurarCliente();
+    }
 
-const initializeWhatsApp = async (io) => {
-    console.log(`🚀 [WhatsApp] Iniciando cliente...`);
-    const client = new Client({
-        puppeteer: {
-            args: [
-                "--disable-setuid-sandbox",
-                "--no-sandbox",
-                "--single-process",
-                "--no-zygote",
-            ],
-            executablePath: process.env.NODE_ENV === "production"
-                ? process.env.PUPPETEER_EXECUTABLE_PATH
-                : puppeteer.executablePath(),
+    configurarCliente() {
+        return new Client({
+            puppeteer: {
+                args: [
+                    "--disable-setuid-sandbox",
+                    "--no-sandbox",
+                    "--single-process",
+                    "--no-zygote",
+                ],
+                executablePath: process.env.NODE_ENV === "production"
+                    ? process.env.PUPPETEER_EXECUTABLE_PATH
+                    : puppeteer.executablePath(),
+            }
+        });
+    }
+
+    async inicializar() {
+        this.configurarEventos();
+        try {
+            await this.client.initialize();
+            console.log(`✅ [WhatsApp] Cliente inicializado exitosamente`);
+        } catch (error) {
+            console.error(`❌ [WhatsApp] Error al inicializar cliente:`, error);
+            this.io.emit('error', { 
+                message: 'Error al inicializar WhatsApp',
+                details: error.message 
+            });
         }
-    });
+    }
 
-    client.on('qr', async (qr) => {
+    configurarEventos() {
+        this.client.on('qr', async (qr) => this.manejarQR(qr));
+        this.client.on('ready', () => this.manejarReady());
+        this.client.on('message', async (msg) => this.manejarMensaje(msg));
+    }
+
+    async manejarQR(qr) {
         try {
             const qrCode = await qrcode.toDataURL(qr);
-            io.emit('whatsappQR', { qrCode });
+            this.io.emit('whatsappQR', { qrCode });
             console.log('Nuevo código QR generado');
         } catch (error) {
             console.error('Error al generar QR:', error);
         }
-    });
-  // Manejar estado ready
-    client.on('ready', () => {
+    }
+
+    manejarReady() {
         console.log('Cliente WhatsApp listo');
-        io.emit('whatsappStatus', { 
+        this.io.emit('whatsappStatus', { 
             status: 'ready',
             message: '¡WhatsApp está listo!' 
         });
-    });
+    }
 
-    client.on('message', async (msg) => {
+    async manejarMensaje(msg) {
         if (msg.isGroupMsg) {
             console.log(`🚫 [WhatsApp] Mensaje de grupo ignorado: ${msg.from}`);
             return;
         }
-        
+
         try {
-            console.log(`📩 [WhatsApp] Mensaje recibido de ${msg.from}:`, {
-                tipo: msg.type,
-                timestamp: new Date().toISOString()
-            });
-
-            const chat = await msg.getChat();
-            await chat.sendStateTyping();
-
-            if (msg.type !== 'chat') {
-                await msg.reply('Por favor, envíame un mensaje de texto 🙂');
-                return;
-            }
-
-            const peliculas = await obtenerCartelera();
-            const respuesta = await procesarMensajeIA(msg.body, peliculas, msg.from);
-            
-            actualizarContextoConversacion(msg.from, msg.body, respuesta);
-
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            await msg.reply(respuesta);
-            await chat.clearState();
-
+            await this.procesarMensaje(msg);
         } catch (error) {
-            console.error(`❌ [WhatsApp] Error procesando mensaje de ${msg.from}:`, error);
+            console.error(`❌ [WhatsApp] Error procesando mensaje:`, error);
             await msg.reply('¡Ups! 😅 Algo falló, ¿podrías intentarlo de nuevo?');
         }
-    });
-
-    try {
-        await client.initialize();
-        console.log(`✅ [WhatsApp] Cliente inicializado exitosamente`);
-    } catch (error) {
-        console.error(`❌ [WhatsApp] Error al inicializar cliente:`, error);
-        io.emit('error', { 
-            message: 'Error al inicializar WhatsApp',
-            details: error.message 
-        });
     }
+
+    async procesarMensaje(msg) {
+        const chat = await msg.getChat();
+        await chat.sendStateTyping();
+
+        if (msg.type !== 'chat') {
+            await msg.reply('Por favor, envíame un mensaje de texto 🙂');
+            return;
+        }
+
+        const peliculas = await this.carteleraManager.obtenerCartelera();
+        const contexto = this.conversacionManager.obtenerContexto(msg.from);
+        
+        const respuesta = await this.iaService.procesarMensaje(
+            msg.body, 
+            peliculas, 
+            msg.from,
+            contexto
+        );
+
+        this.conversacionManager.actualizarContexto(msg.from, msg.body, respuesta);
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await msg.reply(respuesta);
+        await chat.clearState();
+    }
+}
+
+const initializeWhatsApp = async (io) => {
+    const bot = new WhatsAppBot(io);
+    await bot.inicializar();
 };
 
 module.exports = { initializeWhatsApp };
