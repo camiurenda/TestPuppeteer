@@ -1,4 +1,4 @@
-const { Client } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const puppeteer = require("puppeteer");
 const axios = require('axios');
@@ -219,20 +219,58 @@ async function limpiarConversacionesAntiguas() {
 
 setInterval(limpiarConversacionesAntiguas, 15 * 60 * 1000);
 
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_INTERVAL = 5000;
+
 const initializeWhatsApp = async (io) => {
     console.log(`🚀 [WhatsApp] Iniciando cliente...`);
-    const client = new Client({
+
+    const handleReconnect = async () => {
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++;
+            console.log(`🔄 [WhatsApp] Intento de reconexión ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+            await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+            try {
+                await client.initialize();
+            } catch (error) {
+                console.error(`❌ [WhatsApp] Error en reconexión:`, error);
+                await handleReconnect();
+            }
+        } else {
+            console.error(`❌ [WhatsApp] Máximo de intentos de reconexión alcanzado`);
+            io.emit('whatsappStatus', { 
+                status: 'error',
+                message: 'Error de conexión persistente' 
+            });
+        }
+    };
+const client = new Client({
         puppeteer: {
             args: [
                 "--disable-setuid-sandbox",
                 "--no-sandbox",
                 "--single-process",
                 "--no-zygote",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--disable-notifications",
+                "--window-size=800,600",
+                "--disk-cache-size=0",
             ],
             executablePath: process.env.NODE_ENV === "production"
                 ? process.env.PUPPETEER_EXECUTABLE_PATH
                 : puppeteer.executablePath(),
-        }
+            headless: "new",
+            timeout: 60000,
+            defaultViewport: { width: 800, height: 600 },
+            ignoreHTTPSErrors: true,
+        },
+        authStrategy: new LocalAuth({
+            clientId: "film-fetcher-bot",
+            dataPath: "./whatsapp-sessions"
+        })
     });
 
     client.on('qr', async (qr) => {
@@ -246,11 +284,21 @@ const initializeWhatsApp = async (io) => {
     });
 
     client.on('ready', () => {
+        reconnectAttempts = 0;
         console.log(`✨ [WhatsApp] Cliente listo y operativo`);
         io.emit('whatsappStatus', { 
             status: 'ready',
             message: '¡WhatsApp está listo!' 
         });
+    });
+
+    client.on('disconnected', async (reason) => {
+        console.log(`🔌 [WhatsApp] Cliente desconectado:`, reason);
+        io.emit('whatsappStatus', { 
+            status: 'disconnected',
+            message: 'WhatsApp desconectado' 
+        });
+        await handleReconnect();
     });
 
     client.on('message', async (msg) => {
@@ -297,6 +345,7 @@ const initializeWhatsApp = async (io) => {
             message: 'Error al inicializar WhatsApp',
             details: error.message 
         });
+        await handleReconnect();
     }
 };
 
